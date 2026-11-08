@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "github-portfolio-steward"
+version = "1.0.0"
+description = "Zero-dependency autonomous GitHub portfolio curator and codebase analyzer for hands-free description, topic, and docstring governance."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Ethan-da-Tech-Wizard", email = "224360887+Ethan-da-Tech-Wizard@users.noreply.github.com" }
+]
+keywords = [
+    "github-api",
+    "portfolio",
+    "codebase-analysis",
+    "automation",
+    "devops",
+    "zero-dependencies",
+    "python"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+dependencies = []
+
+[project.scripts]
+portfolio-steward = "steward.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["steward*"]
