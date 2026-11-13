@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "github-portfolio-steward"
 version = "1.0.0"
-description = "Zero-dependency autonomous GitHub portfolio curator and codebase analyzer for hands-free description, topic, and docstring governance."
+description = "Project for auditing repository metadata and source headers with the GitHub CLI."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -22,7 +22,6 @@ keywords = [
     "python"
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Version Control :: Git",
