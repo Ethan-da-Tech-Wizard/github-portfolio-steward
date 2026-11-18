@@ -1,3 +1,8 @@
+# Program: github-portfolio-steward - header_audit.py
+# Programmer: Ethan-da-Tech-Wizard (written with Claude, an AI assistant)
+# Last Modified: 2026-11-18
+# Purpose: Checks source files for the standard four-field header (Program, Programmer, Last Modified, Purpose) and builds per-file and per-folder compliance reports.
+
 """
 Program: GitHub Portfolio Steward - Codebase Header Auditor
 Programmer: Ethan-da-Tech-Wizard
@@ -5,11 +10,17 @@ Last Modified: 11/08/2026
 Purpose: Inspects source code files for compliant Ethan-da-Tech-Wizard header docstrings and outputs detailed compliance reports.
 """
 
+# ============================================================
+# IMPORTS
+# ============================================================
+# os.walk visits every folder; re finds header fields; Path handles file paths.
 import os
 import re
 from pathlib import Path
+# Type hints only.
 from typing import List, Optional, Set, Dict, Any
 
+# Result and report containers filled in by the auditor.
 from steward.models import HeaderAuditResult, HeaderAuditReport
 
 
@@ -20,6 +31,7 @@ class HeaderAuditor:
     """
 
     ## Supported source code file extensions.
+    # Only files with these extensions are audited.
     DEFAULT_EXTENSIONS = {
         ".py", ".rs", ".js", ".ts", ".jsx", ".tsx",
         ".c", ".cpp", ".cc", ".h", ".hpp", ".go",
@@ -27,6 +39,7 @@ class HeaderAuditor:
     }
 
     ## Ignored directory names during recursive audits.
+    # Folders never searched: version control, caches, virtual environments and build output.
     DEFAULT_IGNORED_DIRS = {
         ".git", ".svn", ".hg", "__pycache__", "node_modules",
         "venv", ".venv", "env", "target", "build", "dist",
@@ -34,24 +47,30 @@ class HeaderAuditor:
     }
 
     ## Regular expressions for detecting standard header key-value fields.
+    # Each pattern captures the text after its label on the same line, ignoring upper/lower case.
     _PROGRAM_PATTERN = re.compile(r"Program:\s*(.+)", re.IGNORECASE)
     _PROGRAMMER_PATTERN = re.compile(r"Programmer:\s*(.+)", re.IGNORECASE)
     _LAST_MODIFIED_PATTERN = re.compile(r"Last Modified:\s*(.+)", re.IGNORECASE)
     _PURPOSE_PATTERN = re.compile(r"Purpose:\s*(.+)", re.IGNORECASE)
 
     ## Regex for extracting Python docstrings at the beginning of a file.
+    # Finds the text inside the first triple-quoted string at the top of a Python file (leading # comment lines are allowed first).
     _PYTHON_DOCSTRING_PATTERN = re.compile(r'^\s*(?:#.*?\n)*\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', re.DOTALL)
 
     ## Regex for extracting C-style block comments /* ... */ at top of file.
+    # Finds the first /* ... */ block comment at the top of a file (leading # or // lines are allowed first).
     _C_BLOCK_COMMENT_PATTERN = re.compile(r'^\s*(?:#.*?\n|//.*?\n)*\s*/\*(.*?)\*/', re.DOTALL)
 
     def audit_content(self, content: str, file_path: str, ext: str) -> HeaderAuditResult:
         """
         ## Evaluates a single file's text content for header compliance.
         """
+        # Turn the extension into a readable language name for the report.
         lang = self._get_language_label(ext)
+        # Pull out just the header comment from the top of the file.
         header_text = self._extract_header_text(content, ext)
 
+        # No header at all: report every field as missing.
         if not header_text:
             return HeaderAuditResult(
                 file_path=file_path,
@@ -61,16 +80,19 @@ class HeaderAuditor:
                 error_message="No header docstring or comment block found at file start."
             )
 
+        # Search the header text for each of the four labelled fields.
         program_match = self._PROGRAM_PATTERN.search(header_text)
         programmer_match = self._PROGRAMMER_PATTERN.search(header_text)
         last_modified_match = self._LAST_MODIFIED_PATTERN.search(header_text)
         purpose_match = self._PURPOSE_PATTERN.search(header_text)
 
+        # Keep the captured value (trimmed) or None if the field was not found.
         program_val = program_match.group(1).strip() if program_match else None
         programmer_val = programmer_match.group(1).strip() if programmer_match else None
         last_mod_val = last_modified_match.group(1).strip() if last_modified_match else None
         purpose_val = purpose_match.group(1).strip() if purpose_match else None
 
+        # Collect the names of fields that are absent.
         missing_fields: List[str] = []
         if not program_val:
             missing_fields.append("Program")
@@ -82,11 +104,13 @@ class HeaderAuditor:
             missing_fields.append("Purpose")
 
         ## Verify Programmer is specifically Ethan-da-Tech-Wizard.
+        # Extra rule: the Programmer line must name Ethan-da-Tech-Wizard (checked ignoring case).
         error_msg = None
         if programmer_val and "ethan-da-tech-wizard" not in programmer_val.lower():
             missing_fields.append("Programmer (Must be Ethan-da-Tech-Wizard)")
             error_msg = f"Programmer specified as '{programmer_val}', expected 'Ethan-da-Tech-Wizard'."
 
+        # A file passes only when nothing is missing.
         is_compliant = len(missing_fields) == 0
 
         return HeaderAuditResult(
@@ -105,6 +129,7 @@ class HeaderAuditor:
         """
         ## Reads and audits an individual file from disk.
         """
+        # Make the path absolute and confirm the file exists.
         path = Path(file_path).resolve()
         if not path.is_file():
             return HeaderAuditResult(
@@ -114,8 +139,10 @@ class HeaderAuditor:
                 error_message=f"File not found: {file_path}"
             )
 
+        # The extension decides which header style to look for.
         ext = path.suffix.lower()
         try:
+            # Read as UTF-8; errors='replace' swaps bad bytes for a placeholder instead of crashing.
             content = path.read_text(encoding="utf-8", errors="replace")
             return self.audit_content(content, str(path), ext)
         except Exception as err:
@@ -135,26 +162,33 @@ class HeaderAuditor:
         """
         ## Recursively audits all matching source files in a target directory tree.
         """
+        # Use the given extensions/ignore lists, or the class defaults when none are passed.
         root = Path(directory_path).resolve()
         target_exts = extensions or self.DEFAULT_EXTENSIONS
         ignore = ignored_dirs or self.DEFAULT_IGNORED_DIRS
 
+        # Results gathered from every matching file.
         results: List[HeaderAuditResult] = []
 
+        # Walk the folder tree from the root.
         for current_root, dirs, files in os.walk(root):
             ## Prune ignored directories.
+            # Modifying 'dirs' in place stops os.walk from entering ignored folders.
             dirs[:] = [d for d in dirs if d not in ignore]
 
+            # Sorted so the report order is the same every run.
             for fname in sorted(files):
                 fpath = Path(current_root) / fname
                 ext = fpath.suffix.lower()
 
+                # Audit only source-code files, and show paths relative to the root.
                 if ext in target_exts:
                     rel_path = str(fpath.relative_to(root))
                     res = self.audit_file(str(fpath))
                     res.file_path = rel_path
                     results.append(res)
 
+        # Compute the totals; an empty folder counts as 100% compliant.
         total = len(results)
         compliant = sum(1 for r in results if r.is_compliant)
         non_compliant = total - compliant
@@ -173,18 +207,21 @@ class HeaderAuditor:
         """
         ## Extracts the leading header comment or docstring block according to language syntax.
         """
+        # Python headers live in the module docstring.
         if ext == ".py":
             match = self._PYTHON_DOCSTRING_PATTERN.search(content)
             if match:
                 return match.group(1)
 
         ## C, C++, Rust, JavaScript, TypeScript, Go block comment.
+        # These languages use /* ... */ block comments.
         if ext in (".c", ".cpp", ".cc", ".h", ".hpp", ".rs", ".js", ".ts", ".jsx", ".tsx", ".go"):
             match = self._C_BLOCK_COMMENT_PATTERN.search(content)
             if match:
                 return match.group(1)
 
         ## Shell or generic hash comments at file head.
+        # Shell and fallback style: read consecutive '#' comment lines from the first 30 lines, skipping a shebang.
         lines = content.splitlines()[:30]
         hash_lines: List[str] = []
         found_header = False
@@ -209,6 +246,7 @@ class HeaderAuditor:
         """
         ## Maps file extension to human-readable language name.
         """
+        # Lookup table from extension to display name; unknown extensions give 'Unknown'.
         mapping = {
             ".py": "Python",
             ".rs": "Rust",

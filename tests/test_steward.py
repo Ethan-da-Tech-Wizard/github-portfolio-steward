@@ -1,3 +1,8 @@
+# Program: github-portfolio-steward - test_steward.py
+# Programmer: Ethan-da-Tech-Wizard (written with Claude, an AI assistant)
+# Last Modified: 2026-11-18
+# Purpose: Unit tests for the steward package: models, scanner, synthesizer, updater, header auditor and CLI, using temporary folders and mocked gh calls so nothing touches GitHub.
+
 """
 Program: GitHub Portfolio Steward - Unit Test Suite
 Programmer: Ethan-da-Tech-Wizard
@@ -5,6 +10,12 @@ Last Modified: 11/08/2026
 Purpose: Comprehensive unit test suite validating scanner, synthesizer, updater, header auditor, models, and CLI subcommands.
 """
 
+# ============================================================
+# IMPORTS
+# ============================================================
+# unittest is the standard-library test framework; each TestCase class groups related tests.
+# io.StringIO captures printed output; tempfile/shutil make and delete scratch folders;
+# unittest.mock lets us replace the real gh call with fake output.
 import io
 import json
 import os
@@ -14,6 +25,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
+# The code under test.
 from steward.models import (
     RepoSummary,
     CodebaseFacts,
@@ -28,13 +40,18 @@ from steward.header_audit import HeaderAuditor
 from steward.cli import main, create_parser
 
 
+# ============================================================
+# MODEL TESTS
+# ============================================================
 class TestModels(unittest.TestCase):
     """
     ## Verifies serialization, initialization, and defaults of core data models.
     """
 
     def test_repo_summary_to_dict(self):
+        """Test RepoSummary serialization to dictionary."""
         ## Test RepoSummary serialization to dictionary.
+        # Build a sample object with some fields set; the rest use their defaults.
         repo = RepoSummary(
             name="test-repo",
             full_name="Ethan-da-Tech-Wizard/test-repo",
@@ -43,6 +60,7 @@ class TestModels(unittest.TestCase):
             topics=["python", "cli"],
             default_branch="main"
         )
+        # Convert to a dictionary and check the values survived.
         d = repo.to_dict()
         self.assertEqual(d["name"], "test-repo")
         self.assertEqual(d["full_name"], "Ethan-da-Tech-Wizard/test-repo")
@@ -51,7 +69,9 @@ class TestModels(unittest.TestCase):
         self.assertFalse(d["is_fork"])
 
     def test_codebase_facts_defaults(self):
+        """Test CodebaseFacts default values and serialization."""
         ## Test CodebaseFacts default values and serialization.
+        # A brand-new object should hold empty/zero/False defaults.
         facts = CodebaseFacts()
         self.assertEqual(facts.file_count, 0)
         self.assertEqual(facts.detected_frameworks, [])
@@ -60,6 +80,7 @@ class TestModels(unittest.TestCase):
         self.assertIsInstance(d, dict)
 
     def test_metadata_recommendation(self):
+        """Test MetadataRecommendation initialization and delta properties."""
         ## Test MetadataRecommendation initialization and delta properties.
         rec = MetadataRecommendation(
             repo_name="Ethan-da-Tech-Wizard/sample",
@@ -75,21 +96,30 @@ class TestModels(unittest.TestCase):
         self.assertEqual(rec.to_dict()["confidence_score"], 1.0)
 
 
+# ============================================================
+# SCANNER TESTS
+# ============================================================
 class TestScanner(unittest.TestCase):
     """
     ## Verifies scanner logic across local directory trees, README extraction, and remote mocking.
     """
 
     def setUp(self):
+        """Create an isolated temporary directory for file tree analysis."""
         ## Create an isolated temporary directory for file tree analysis.
+        # mkdtemp makes a fresh empty folder that tests can fill with fake project files.
         self.test_dir = tempfile.mkdtemp()
 
     def tearDown(self):
+        """Clean up temporary test files."""
         ## Clean up temporary test files.
+        # Delete the scratch folder even if a test failed.
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_extract_readme_summary_basic(self):
+        """Verify markdown cleaning: strip badges, links, headers."""
         ## Verify markdown cleaning: strip badges, links, headers.
+        # Sample README text with a heading, a badge, a link and a bullet list.
         markdown = """# Project Title
 [![Build Status](https://img.shields.io/travis/repo.svg)](https://travis-ci.org/repo)
 
@@ -101,6 +131,7 @@ It inspects repositories and applies standardized topics and descriptions.
 - Feature 2
 """
         scanner = RepositoryScanner()
+        # Only the cleaned overview paragraph should come back.
         summary = scanner.extract_readme_summary(markdown)
         self.assertIsNotNone(summary)
         self.assertTrue("zero-dependency autonomous GitHub portfolio curator" in summary)
@@ -108,13 +139,16 @@ It inspects repositories and applies standardized topics and descriptions.
         self.assertNotIn("#", summary)
 
     def test_extract_readme_summary_empty(self):
+        """Verify graceful handling of empty or blank README."""
         ## Verify graceful handling of empty or blank README.
         scanner = RepositoryScanner()
         self.assertIsNone(scanner.extract_readme_summary(""))
         self.assertIsNone(scanner.extract_readme_summary("# Title only\n"))
 
     def test_inspect_local_directory_markers(self):
+        """Verify detection of Python, Cargo, Docker, Systemd, CI, and test markers."""
         ## Verify detection of Python, Cargo, Docker, Systemd, CI, and test markers.
+        # Create small marker files that the scanner should recognise.
         d = Path(self.test_dir)
         (d / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
         (d / "Cargo.toml").write_text("[package]\nname='test'\n", encoding="utf-8")
@@ -123,6 +157,7 @@ It inspects repositories and applies standardized topics and descriptions.
         (d / "LICENSE").write_text("MIT License\n", encoding="utf-8")
         (d / "README.md").write_text("# Test\n\nHigh-performance systems utility for autonomous tasks.\n", encoding="utf-8")
 
+        # A tests folder and a CI workflow file should set has_tests and has_ci.
         tests_dir = d / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_main.py").write_text("def test_dummy(): pass\n", encoding="utf-8")
@@ -137,6 +172,7 @@ It inspects repositories and applies standardized topics and descriptions.
         (node_modules / "junk.js").write_text("console.log('skip');\n", encoding="utf-8")
 
         scanner = RepositoryScanner()
+        # Run the scan on the fake project, then check each expected finding.
         facts = scanner.inspect_local_directory(self.test_dir)
 
         self.assertIn("cargo", facts.detected_frameworks)
@@ -155,7 +191,9 @@ It inspects repositories and applies standardized topics and descriptions.
 
     @patch("steward.scanner.subprocess.run")
     def test_fetch_github_repos_mock(self, mock_run):
+        """Verify parsing of gh repo list JSON output."""
         ## Verify parsing of gh repo list JSON output.
+        # Fake JSON that pretends to be what 'gh repo list' printed.
         mock_output = [
             {
                 "name": "my-tool",
@@ -192,12 +230,16 @@ It inspects repositories and applies standardized topics and descriptions.
         self.assertEqual(repos[0].topics, ["cli", "python"])
 
 
+# ============================================================
+# SYNTHESIZER TESTS
+# ============================================================
 class TestSynthesizer(unittest.TestCase):
     """
     ## Verifies metadata synthesis, exclusion rules, topic normalization, and length constraints.
     """
 
     def test_normalize_topic(self):
+        """Verify topic standardization into valid GitHub tags."""
         ## Verify topic standardization into valid GitHub tags.
         synth = MetadataSynthesizer()
         self.assertEqual(synth.normalize_topic("Python"), "python")
@@ -209,6 +251,7 @@ class TestSynthesizer(unittest.TestCase):
         self.assertIsNone(synth.normalize_topic("a" * 36))  ## Over 35 char limit
 
     def test_exclusion_patterns(self):
+        """Verify exclusion filtering via exact names and regex patterns."""
         ## Verify exclusion filtering via exact names and regex patterns.
         synth = MetadataSynthesizer(exclusions=["EXAMPLE_ORG", r".*-private$", "archived-.*"])
         self.assertTrue(synth.is_excluded("EXAMPLE_ORG"))
@@ -218,6 +261,7 @@ class TestSynthesizer(unittest.TestCase):
         self.assertFalse(synth.is_excluded("github-portfolio-steward"))
 
     def test_synthesize_description_length_limit(self):
+        """Verify generated description is strictly under 250 characters."""
         ## Verify generated description is strictly under 250 characters.
         synth = MetadataSynthesizer()
         repo = RepoSummary(name="test-repo", full_name="user/test-repo")
@@ -233,6 +277,7 @@ class TestSynthesizer(unittest.TestCase):
         self.assertTrue(desc.endswith("..."))
 
     def test_recommendation_delta(self):
+        """Verify recommendation produces correct delta between current and proposed metadata."""
         ## Verify recommendation produces correct delta between current and proposed metadata.
         synth = MetadataSynthesizer()
         repo = RepoSummary(
@@ -256,12 +301,17 @@ class TestSynthesizer(unittest.TestCase):
         self.assertNotIn("python", rec.topics_to_add)  ## Already in current_topics
 
 
+# ============================================================
+# UPDATER TESTS
+# ============================================================
+# These check the commands that would be sent to gh; live runs use a mock.
 class TestUpdater(unittest.TestCase):
     """
     ## Verifies dry-run command generation and live application.
     """
 
     def test_build_gh_edit_command(self):
+        """Verify CLI command assembly for gh repo edit."""
         ## Verify CLI command assembly for gh repo edit.
         updater = PortfolioUpdater()
         rec = MetadataRecommendation(
@@ -281,6 +331,7 @@ class TestUpdater(unittest.TestCase):
         self.assertIn("automation", cmd)
 
     def test_apply_dry_run(self):
+        """Verify dry-run returns planned status without executing subprocess."""
         ## Verify dry-run returns planned status without executing subprocess.
         updater = PortfolioUpdater()
         rec = MetadataRecommendation(
@@ -297,6 +348,7 @@ class TestUpdater(unittest.TestCase):
 
     @patch("steward.updater.subprocess.run")
     def test_apply_live_success(self, mock_run):
+        """Verify live execution handling when gh command succeeds."""
         ## Verify live execution handling when gh command succeeds.
         mock_proc = MagicMock()
         mock_proc.returncode = 0
@@ -318,6 +370,7 @@ class TestUpdater(unittest.TestCase):
 
 
     def test_apply_live_failure(self):
+        """Verify handling of gh CLI failure."""
         ## Verify handling of gh CLI failure.
         with patch("steward.updater.subprocess.run") as mock_run:
             mock_proc = MagicMock()
@@ -339,6 +392,7 @@ class TestUpdater(unittest.TestCase):
             self.assertIn("403", res["message"])
 
     def test_apply_noop(self):
+        """Verify noop when metadata matches."""
         ## Verify noop when metadata matches.
         updater = PortfolioUpdater()
         rec = MetadataRecommendation(
@@ -353,15 +407,21 @@ class TestUpdater(unittest.TestCase):
         self.assertFalse(res["changes_applied"])
 
 
+# ============================================================
+# HEADER AUDITOR TESTS
+# ============================================================
+# The sample file contents below are strings; they are test data, not real headers for this file.
 class TestHeaderAuditor(unittest.TestCase):
     """
     ## Verifies detection of compliant and non-compliant Ethan-da-Tech-Wizard header blocks.
     """
 
     def setUp(self):
+        """Create the HeaderAuditor object that each test below will use."""
         self.auditor = HeaderAuditor()
 
     def test_compliant_python_header(self):
+        """Test valid Python docstring header."""
         ## Test valid Python docstring header.
         content = '''"""
 Program: Test Component
@@ -382,6 +442,7 @@ def foo():
         self.assertEqual(len(res.missing_fields), 0)
 
     def test_compliant_c_style_header(self):
+        """Test valid C/Rust/JS block comment header."""
         ## Test valid C/Rust/JS block comment header.
         content = '''/*
 Program: Core Engine
@@ -397,6 +458,7 @@ int main() { return 0; }
         self.assertEqual(res.program_name, "Core Engine")
 
     def test_missing_fields_detection(self):
+        """Test detection of missing fields."""
         ## Test detection of missing fields.
         content = '''"""
 Program: Only Program Name
@@ -409,6 +471,7 @@ Program: Only Program Name
         self.assertIn("Purpose", res.missing_fields)
 
     def test_non_ethan_programmer(self):
+        """Test that non-Ethan-da-Tech-Wizard programmer fails compliance."""
         ## Test that non-Ethan-da-Tech-Wizard programmer fails compliance.
         content = '''"""
 Program: Some Tool
@@ -422,6 +485,7 @@ Purpose: Tool purpose.
         self.assertTrue(any("Ethan-da-Tech-Wizard" in f for f in res.missing_fields))
 
     def test_directory_audit(self):
+        """Test recursive audit of a directory with compliant and non-compliant files."""
         ## Test recursive audit of a directory with compliant and non-compliant files.
         with tempfile.TemporaryDirectory() as temp_dir:
             td = Path(temp_dir)
@@ -444,12 +508,18 @@ Purpose: Good file.
             self.assertEqual(report.compliance_percentage, 50.0)
 
 
+# ============================================================
+# CLI TESTS
+# ============================================================
+# main([...]) is called with a list of arguments, like typing a command in a terminal;
+# it returns the exit code, and patched sys.stdout captures what it prints.
 class TestCLI(unittest.TestCase):
     """
     ## Verifies command-line interface execution, flag handling, and exit codes.
     """
 
     def test_create_parser(self):
+        """Verify parser builds with all subcommands and parses valid args."""
         ## Verify parser builds with all subcommands and parses valid args.
         parser = create_parser()
         args = parser.parse_args(["scan", "--limit", "25", "--json"])
@@ -458,6 +528,7 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(args.json_output)
 
     def test_scan_local_cli(self):
+        """Verify scan --local outputs expected text and returns 0."""
         ## Verify scan --local outputs expected text and returns 0.
         with tempfile.TemporaryDirectory() as temp_dir:
             (Path(temp_dir) / "README.md").write_text("# Test\n\nSample test repo overview.\n", encoding="utf-8")
@@ -469,6 +540,7 @@ class TestCLI(unittest.TestCase):
                 self.assertIn("Has README:          Yes", out)
 
     def test_header_check_cli_pass_and_fail(self):
+        """Verify header-check exit code complies with fail-under threshold."""
         ## Verify header-check exit code complies with fail-under threshold.
         with tempfile.TemporaryDirectory() as temp_dir:
             td = Path(temp_dir)
@@ -497,6 +569,7 @@ Purpose: Test CLI header checking.
 
 
     def test_describe_local_cli(self):
+        """Verify describe subcommand with --local directory."""
         ## Verify describe subcommand with --local directory.
         with tempfile.TemporaryDirectory() as temp_dir:
             td = Path(temp_dir)
@@ -513,6 +586,7 @@ Purpose: Test CLI header checking.
 
     @patch("steward.scanner.subprocess.run")
     def test_audit_cli(self, mock_run):
+        """Verify audit subcommand against remote repository list."""
         ## Verify audit subcommand against remote repository list.
         mock_output = [
             {
@@ -557,6 +631,7 @@ Purpose: Test CLI header checking.
             self.assertIn("Ethan-da-Tech-Wizard/empty-repo", data["missing_description"])
 
     def test_header_check_formats(self):
+        """Verify markdown and json output formats for header-check."""
         ## Verify markdown and json output formats for header-check.
         with tempfile.TemporaryDirectory() as temp_dir:
             td = Path(temp_dir)
