@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Metadata Synthesizer
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Deterministically synthesizes crisp, professional repository descriptions (<250 characters) and standardized GitHub topics based on codebase facts.
-"""
-
+# ==============================================================================
+# Program: synthesizer.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Deterministically synthesizes crisp, professional repository descriptions (<250 characters) and standardized GitHub topics based on codebase facts. Uses weighted heuristic scoring to generate search-optimized metadata.
+# ==============================================================================
 import re
 from typing import List, Optional, Set, Pattern
 from steward.models import RepoSummary, CodebaseFacts, MetadataRecommendation

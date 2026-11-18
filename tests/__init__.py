@@ -1,6 +1,6 @@
-"""
-Program: GitHub Portfolio Steward - Test Suite Root
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Test suite initialization package for GitHub Portfolio Steward.
-"""
+# ==============================================================================
+# Program: __init__.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Test package initializer for GitHub Portfolio Steward automated test suite.
+# ==============================================================================

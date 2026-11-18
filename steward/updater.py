@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Hands-Free Updater
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Applies synthesized descriptions and topics to GitHub repositories via the gh CLI with dry-run and apply modes.
-"""
-
+# ==============================================================================
+# Program: updater.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Applies synthesized descriptions and topics to GitHub repositories via the gh CLI with dry-run and apply modes. Formats gh repo edit commands and updates remote GitHub metadata safely.
+# ==============================================================================
 import subprocess
 from typing import Dict, Any, List, Tuple
 from steward.models import MetadataRecommendation

@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Command-Line Interface
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Dispatches CLI arguments to scanner, synthesizer, updater, and header audit subcommands.
-"""
-
+# ==============================================================================
+# Program: cli.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Command-line interface entry point and argument parsing engine. Dispatches CLI commands across scanner, synthesizer, updater, and header audit subcommands with rich console formatting.
+# ==============================================================================
 import argparse
 import json
 import sys

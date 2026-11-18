@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Data Models
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Strongly-typed dataclasses representing repository state, scan results, metadata recommendations, and header audit metrics.
-"""
-
+# ==============================================================================
+# Program: models.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Strongly-typed dataclasses representing repository state, scan results, metadata recommendations, and header audit metrics. Defines structured schemas for repository inventory, language breakdowns, and compliance scores.
+# ==============================================================================
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 

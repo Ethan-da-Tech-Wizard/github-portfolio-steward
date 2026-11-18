@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Package Root
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Package initialization and public interface exposure for GitHub Portfolio Steward.
-"""
-
+# ==============================================================================
+# Program: __init__.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Package root initialization and public interface exposure for GitHub Portfolio Steward. Exports core models, scanners, synthesizers, and auditors.
+# ==============================================================================
 ## Export primary models and classes for direct module consumption.
 from steward.models import (
     RepoSummary,
