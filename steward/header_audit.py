@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Codebase Header Auditor
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Inspects source code files for compliant Ethan-da-Tech-Wizard header docstrings and outputs detailed compliance reports.
-"""
-
+# ==============================================================================
+# Program: header_audit.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Inspects source code files for compliant Ethan-da-Tech-Wizard header docstrings and outputs detailed compliance reports. Validates Program, Programmer, Last Modified date, and multi-sentence Purpose declarations.
+# ==============================================================================
 import os
 import re
 from pathlib import Path
@@ -174,6 +173,21 @@ class HeaderAuditor:
         ## Extracts the leading header comment or docstring block according to language syntax.
         """
         if ext == ".py":
+            ## Check leading hash comments first if compliant block is present.
+            lines = content.splitlines()[:30]
+            hash_lines: List[str] = []
+            for line in lines:
+                trimmed = line.strip()
+                if trimmed.startswith("#!"):
+                    continue
+                if trimmed.startswith("#"):
+                    hash_lines.append(trimmed.lstrip("#").strip())
+                else:
+                    break
+            hash_text = "\n".join(hash_lines)
+            if "Program:" in hash_text and "Programmer:" in hash_text:
+                return hash_text
+
             match = self._PYTHON_DOCSTRING_PATTERN.search(content)
             if match:
                 return match.group(1)

@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Repository Scanner
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Inspects remote repositories via gh CLI and local disk clones to extract language, framework markers, and documentation snippets.
-"""
-
+# ==============================================================================
+# Program: scanner.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Inspects remote repositories via gh CLI and local disk clones to extract language, framework markers, and documentation snippets. Traverses file trees to identify manifest files (package.json, Cargo.toml, requirements.txt) and parses structure to extract architectural facts.
+# ==============================================================================
 import json
 import os
 import re

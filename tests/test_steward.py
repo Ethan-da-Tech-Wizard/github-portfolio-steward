@@ -1,10 +1,9 @@
-"""
-Program: GitHub Portfolio Steward - Unit Test Suite
-Programmer: Ethan-da-Tech-Wizard
-Last Modified: 11/08/2026
-Purpose: Comprehensive unit test suite validating scanner, synthesizer, updater, header auditor, models, and CLI subcommands.
-"""
-
+# ==============================================================================
+# Program: test_steward.py
+# Programmer: Ethan-da-Tech-Wizard
+# Last Modified: November 18, 2026
+# Purpose: Comprehensive unit test suite validating scanner, synthesizer, updater, header auditor, models, and CLI subcommands with simulated GitHub CLI responses and mock file systems.
+# ==============================================================================
 import io
 import json
 import os
