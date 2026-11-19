@@ -4,6 +4,16 @@
 # Last Modified: November 18, 2026
 # Purpose: Inspects source code files for compliant Ethan-da-Tech-Wizard header docstrings and outputs detailed compliance reports. Validates Program, Programmer, Last Modified date, and multi-sentence Purpose declarations.
 # ==============================================================================
+# Role: backs the `steward header-check` subcommand (steward/cli.py) and the
+# repo's own CI step `python3 -m steward header-check --path . --fail-under 100`,
+# which enforces that every source file starts with the four-field header
+# (Program / Programmer / Last Modified / Purpose) used across the portfolio.
+#
+# Design: the auditor never executes or imports the files it checks; it only
+# looks at the first comment block or docstring, so it is safe to run on
+# untrusted clones. Header fields are matched case-insensitively so a
+# hand-typed 'purpose:' still counts.
+# Limit: it checks presence, not truthfulness, of the date and purpose text.
 import os
 import re
 from pathlib import Path
@@ -19,6 +29,8 @@ class HeaderAuditor:
     """
 
     ## Supported source code file extensions.
+    # Only languages whose comment syntax _extract_header_text understands; adding an
+    # extension here without teaching the extractor would report false failures.
     DEFAULT_EXTENSIONS = {
         ".py", ".rs", ".js", ".ts", ".jsx", ".tsx",
         ".c", ".cpp", ".cc", ".h", ".hpp", ".go",
@@ -26,6 +38,8 @@ class HeaderAuditor:
     }
 
     ## Ignored directory names during recursive audits.
+    # Same noise directories the scanner skips; vendored or generated trees must not
+    # drag a repo's compliance percentage down.
     DEFAULT_IGNORED_DIRS = {
         ".git", ".svn", ".hg", "__pycache__", "node_modules",
         "venv", ".venv", "env", "target", "build", "dist",
@@ -33,24 +47,31 @@ class HeaderAuditor:
     }
 
     ## Regular expressions for detecting standard header key-value fields.
+    # One pattern per field so the report can name exactly which field is missing.
     _PROGRAM_PATTERN = re.compile(r"Program:\s*(.+)", re.IGNORECASE)
     _PROGRAMMER_PATTERN = re.compile(r"Programmer:\s*(.+)", re.IGNORECASE)
     _LAST_MODIFIED_PATTERN = re.compile(r"Last Modified:\s*(.+)", re.IGNORECASE)
     _PURPOSE_PATTERN = re.compile(r"Purpose:\s*(.+)", re.IGNORECASE)
 
     ## Regex for extracting Python docstrings at the beginning of a file.
+    # Allows leading '#' lines (shebang, encoding) before the docstring, then takes
+    # the first triple-quoted string. DOTALL so multi-line docstrings match.
     _PYTHON_DOCSTRING_PATTERN = re.compile(r'^\s*(?:#.*?\n)*\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', re.DOTALL)
 
     ## Regex for extracting C-style block comments /* ... */ at top of file.
+    # Same idea for /* ... */ headers, tolerating leading '//' or '#' lines.
     _C_BLOCK_COMMENT_PATTERN = re.compile(r'^\s*(?:#.*?\n|//.*?\n)*\s*/\*(.*?)\*/', re.DOTALL)
 
     def audit_content(self, content: str, file_path: str, ext: str) -> HeaderAuditResult:
         """
         ## Evaluates a single file's text content for header compliance.
         """
+        # Language label is only for the report table; it does not affect pass/fail.
         lang = self._get_language_label(ext)
         header_text = self._extract_header_text(content, ext)
 
+        # No header block at all: report all four fields missing instead of raising,
+        # so one bare file does not hide the status of the rest of the repo.
         if not header_text:
             return HeaderAuditResult(
                 file_path=file_path,
@@ -60,16 +81,19 @@ class HeaderAuditor:
                 error_message="No header docstring or comment block found at file start."
             )
 
+        # Search the whole header block, not just line 1, so field order is free.
         program_match = self._PROGRAM_PATTERN.search(header_text)
         programmer_match = self._PROGRAMMER_PATTERN.search(header_text)
         last_modified_match = self._LAST_MODIFIED_PATTERN.search(header_text)
         purpose_match = self._PURPOSE_PATTERN.search(header_text)
 
+        # Strip because the capture is greedy to end of line.
         program_val = program_match.group(1).strip() if program_match else None
         programmer_val = programmer_match.group(1).strip() if programmer_match else None
         last_mod_val = last_modified_match.group(1).strip() if last_modified_match else None
         purpose_val = purpose_match.group(1).strip() if purpose_match else None
 
+        # Collected as human-readable names; the CLI prints them verbatim.
         missing_fields: List[str] = []
         if not program_val:
             missing_fields.append("Program")
@@ -86,6 +110,7 @@ class HeaderAuditor:
             missing_fields.append("Programmer (Must be Ethan-da-Tech-Wizard)")
             error_msg = f"Programmer specified as '{programmer_val}', expected 'Ethan-da-Tech-Wizard'."
 
+        # Compliant only when nothing, including the programmer-identity rule, is missing.
         is_compliant = len(missing_fields) == 0
 
         return HeaderAuditResult(
@@ -104,6 +129,7 @@ class HeaderAuditor:
         """
         ## Reads and audits an individual file from disk.
         """
+        # Resolve so report paths are absolute and symlinks do not produce duplicates.
         path = Path(file_path).resolve()
         if not path.is_file():
             return HeaderAuditResult(
@@ -115,8 +141,12 @@ class HeaderAuditor:
 
         ext = path.suffix.lower()
         try:
+            # errors='replace': a stray non-UTF-8 byte in a comment must not make the whole
+            # file count as unreadable.
             content = path.read_text(encoding="utf-8", errors="replace")
             return self.audit_content(content, str(path), ext)
+        # Broad on purpose: any I/O failure becomes a non-compliant result with a
+        # message rather than crashing a repo-wide audit.
         except Exception as err:
             return HeaderAuditResult(
                 file_path=str(path),
@@ -138,6 +168,7 @@ class HeaderAuditor:
         target_exts = extensions or self.DEFAULT_EXTENSIONS
         ignore = ignored_dirs or self.DEFAULT_IGNORED_DIRS
 
+        # sorted(files) below keeps report order stable between runs and platforms.
         results: List[HeaderAuditResult] = []
 
         for current_root, dirs, files in os.walk(root):
@@ -151,12 +182,15 @@ class HeaderAuditor:
                 if ext in target_exts:
                     rel_path = str(fpath.relative_to(root))
                     res = self.audit_file(str(fpath))
+                    # Report relative paths so output is identical regardless of checkout location
+                    # (CI vs laptop).
                     res.file_path = rel_path
                     results.append(res)
 
         total = len(results)
         compliant = sum(1 for r in results if r.is_compliant)
         non_compliant = total - compliant
+        # Zero eligible files counts as 100%: an empty repo should not fail the gate.
         percentage = (compliant / total * 100.0) if total > 0 else 100.0
 
         return HeaderAuditReport(
@@ -173,11 +207,14 @@ class HeaderAuditor:
         ## Extracts the leading header comment or docstring block according to language syntax.
         """
         if ext == ".py":
+            # Python files may use a '#' banner instead of a docstring; accept either form.
+            # Only the first 30 lines are scanned to keep this O(1) per file.
             ## Check leading hash comments first if compliant block is present.
             lines = content.splitlines()[:30]
             hash_lines: List[str] = []
             for line in lines:
                 trimmed = line.strip()
+                # Skip the shebang; it is not part of the header text.
                 if trimmed.startswith("#!"):
                     continue
                 if trimmed.startswith("#"):
@@ -188,6 +225,7 @@ class HeaderAuditor:
             if "Program:" in hash_text and "Programmer:" in hash_text:
                 return hash_text
 
+            # No banner found: fall back to the module docstring.
             match = self._PYTHON_DOCSTRING_PATTERN.search(content)
             if match:
                 return match.group(1)

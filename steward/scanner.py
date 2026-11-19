@@ -4,6 +4,17 @@
 # Last Modified: November 18, 2026
 # Purpose: Inspects remote repositories via gh CLI and local disk clones to extract language, framework markers, and documentation snippets. Traverses file trees to identify manifest files (package.json, Cargo.toml, requirements.txt) and parses structure to extract architectural facts.
 # ==============================================================================
+# How this module fits in: steward/cli.py calls fetch_github_repos() to build
+# the inventory, then inspect_local_directory() (when a clone exists on disk) or
+# inspect_remote_repo() (when it does not) to produce CodebaseFacts, which
+# steward/synthesizer.py turns into README text and steward/header_audit.py
+# audits. Everything goes through the `gh` CLI so no token handling or HTTP
+# client lives in this tool.
+#
+# Known limits: detection is purely filename/extension based (no parsing of
+# manifests), so a repo with vendored code can over-report languages; the
+# remote path is capped by the GitHub tree API (truncated for huge repos).
+# Tested by tests/test_steward.py with a fake gh executable.
 import json
 import os
 import re
@@ -21,12 +32,17 @@ class RepositoryScanner:
     """
 
     ## Regex for cleaning markdown syntax from extracted README snippets.
+    # Compiled once at class level: extract_readme_summary runs per repo and these
+    # four patterns are applied to every candidate paragraph.
     _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
     _MARKDOWN_HEADER_PATTERN = re.compile(r"^#+\s*", re.MULTILINE)
     _MARKDOWN_FORMATTING_PATTERN = re.compile(r"[*_`~]")
     _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
     ## Map of file extensions to canonical language names.
+    # Extension -> display name. Deliberately small: only languages the portfolio
+    # actually contains. Header-only extensions get their own label so a C++ repo
+    # is not mislabelled as C. Anything unmapped is simply not counted.
     _EXTENSION_LANGUAGE_MAP = {
         ".py": "Python",
         ".rs": "Rust",
@@ -51,6 +67,7 @@ class RepositoryScanner:
 
     def __init__(self, gh_executable: str = "gh"):
         ## Store the binary name or path for gh CLI invocations.
+        # Injectable so tests can point at a stub script instead of the real gh.
         self.gh_executable = gh_executable
 
     def _execute_gh(self, args: List[str]) -> Tuple[int, str, str]:
@@ -58,16 +75,22 @@ class RepositoryScanner:
         ## Helper to execute a gh command in a subprocess safely.
         ## Captures stdout and stderr without raising unhandled subprocess exceptions.
         """
+        # List form (never a shell string) so repo names with odd characters cannot
+        # be interpreted by a shell.
         cmd = [self.gh_executable] + args
         try:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
+                # check=False: callers inspect the return code themselves and decide whether
+                # a failure is fatal (list) or recoverable (tree -> contents fallback).
                 check=False
             )
             return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
         except FileNotFoundError:
+            # 127 mirrors the shell's 'command not found' so callers treat it like any
+            # other gh failure without a special exception type.
             ## Return failure if gh CLI is missing from the environment PATH.
             return 127, "", f"Executable '{self.gh_executable}' not found in PATH."
 
@@ -82,6 +105,8 @@ class RepositoryScanner:
         ## Queries GitHub for repository inventory using gh repo list.
         ## Parses JSON responses into strongly-typed RepoSummary models.
         """
+        # Request only the JSON fields RepoSummary needs; asking for more makes gh
+        # slower and wastes API rate limit on large accounts.
         ## Construct argument list requesting standardized JSON fields.
         args = [
             "repo", "list",
@@ -89,12 +114,14 @@ class RepositoryScanner:
             "--json", "name,nameWithOwner,description,isPrivate,isFork,isArchived,primaryLanguage,repositoryTopics,defaultBranchRef,updatedAt,url"
         ]
         if owner:
+            # gh requires the owner positionally right after `repo list`, before flags.
             args.insert(2, owner)
 
         returncode, stdout, stderr = self._execute_gh(args)
         if returncode != 0:
             raise RuntimeError(f"Failed to fetch repositories via gh: {stderr or stdout}")
 
+        # gh prints nothing (not '[]') for an account with zero repos.
         if not stdout:
             return []
 
@@ -103,6 +130,8 @@ class RepositoryScanner:
         except json.JSONDecodeError as err:
             raise ValueError(f"Invalid JSON returned by gh repo list: {err}")
 
+        # Forks and archived repos are skipped by default because they are not the
+        # owner's authored work and would pollute the portfolio README.
         summaries: List[RepoSummary] = []
         for item in raw_data:
             ## Filter forks and archived repos unless explicitly requested.
@@ -156,12 +185,17 @@ class RepositoryScanner:
         if not path.is_dir():
             raise NotADirectoryError(f"Directory not found: {root_dir}")
 
+        # Directories that are never authored source: VCS metadata, caches, virtualenvs
+        # and build output. Pruned in place below so os.walk never descends into them
+        # (this is what keeps scans of big clones fast).
         ignored_dirs = {
             ".git", ".svn", ".hg", "__pycache__", "node_modules",
             "venv", ".venv", "env", "target", "build", "dist",
             ".pytest_cache", ".mypy_cache", ".ruff_cache", "site-packages"
         }
 
+        # Sets, not lists: the same marker file appears in many subdirectories and
+        # each should only be reported once.
         frameworks = set()
         languages = set()
         file_count = 0
@@ -180,6 +214,7 @@ class RepositoryScanner:
 
             ## Check for GitHub Actions CI.
             if str(rel_root).startswith(".github/workflows") and files:
+                # Any file under .github/workflows counts; the workflow content is not parsed.
                 has_ci = True
 
             ## Check for test directories.
@@ -191,6 +226,8 @@ class RepositoryScanner:
                 fpath = Path(root) / fname
                 lower_fname = fname.lower()
 
+                # Prefer an exact README.md over README.rst/README.txt when several exist,
+                # because extract_readme_summary expects Markdown.
                 ## README detection.
                 if lower_fname.startswith("readme"):
                     has_readme = True
@@ -212,6 +249,8 @@ class RepositoryScanner:
                     languages.add(self._EXTENSION_LANGUAGE_MAP[ext])
 
                 ## Framework and tool markers.
+                # Marker files double as language evidence: a repo can have a Cargo.toml
+                # before any .rs file is matched (e.g. only a workspace manifest).
                 if fname in ("Cargo.toml", "Cargo.lock"):
                     frameworks.add("cargo")
                     languages.add("Rust")
@@ -231,11 +270,15 @@ class RepositoryScanner:
                     frameworks.add("go-modules")
                     languages.add("Go")
 
+                # Entry points are recorded relative to the repo root so the synthesizer can
+                # print 'run python -m ...' style hints without leaking absolute paths.
                 ## Common entrypoint detection.
                 if fname in ("main.py", "__main__.py", "main.rs", "index.js", "index.ts", "main.go", "cli.py"):
                     entrypoints.append(str(Path(root).relative_to(path) / fname))
 
         ## Extract README snippet if README exists.
+        # A README that is unreadable must not abort the whole scan; the snippet is
+        # optional metadata and has_readme is already recorded.
         readme_snippet = None
         if readme_path and readme_path.is_file():
             try:
@@ -244,6 +287,8 @@ class RepositoryScanner:
             except Exception:
                 readme_snippet = None
 
+        # sorted() so output is deterministic: the generated README is diffed against
+        # the committed one and set ordering would cause spurious 'changed' results.
         return CodebaseFacts(
             detected_frameworks=sorted(list(frameworks)),
             detected_languages=sorted(list(languages)),
@@ -262,11 +307,15 @@ class RepositoryScanner:
         ## Retrieves git tree recursively and extracts framework markers and README.
         """
         target_branch = branch or "HEAD"
+        # One recursive tree call replaces cloning; truncated=true responses are
+        # possible for very large repos, in which case counts are lower bounds.
         endpoint = f"repos/{repo_full_name}/git/trees/{target_branch}?recursive=1"
         returncode, stdout, stderr = self._execute_gh(["api", endpoint])
 
         if returncode != 0:
             ## If recursive tree fails, fallback to repo info and basic root content list.
+            # Tree endpoint failed (empty repo, rate limit, bad branch): degrade to the
+            # shallower contents listing instead of failing the whole run.
             return self._inspect_remote_root_fallback(repo_full_name)
 
         try:
@@ -290,6 +339,8 @@ class RepositoryScanner:
             fname = os.path.basename(path_str)
             lower_fname = fname.lower()
 
+            # Only blobs are files; 'tree' entries are directories and must not inflate
+            # file_count.
             if entry.get("type") == "blob":
                 file_count += 1
 
@@ -298,6 +349,8 @@ class RepositoryScanner:
                 if lower_fname.startswith("license") or lower_fname.startswith("copying"):
                     has_license = True
                 if (lower_fname.startswith("test_") or lower_fname.endswith("_test.py") or
+                        # Remote scans have no directory walk, so test directories are recognised by
+                        # path substring instead.
                         "tests/" in lower_path or "test/" in lower_path):
                     has_tests = True
 
@@ -349,8 +402,10 @@ class RepositoryScanner:
         endpoint = f"repos/{repo_full_name}/readme"
         returncode, stdout, _ = self._execute_gh(["api", endpoint, "--jq", ".content"])
         if returncode == 0 and stdout:
+            # Imported lazily: only this rarely used path needs it.
             import base64
             try:
+                # The contents API returns base64 with embedded newlines; b64decode ignores them.
                 decoded = base64.b64decode(stdout).decode("utf-8", errors="replace")
                 return self.extract_readme_summary(decoded)
             except Exception:
@@ -373,6 +428,8 @@ class RepositoryScanner:
 
         frameworks = set()
         languages = set()
+        # Fallback only sees the root directory, so these numbers are a floor, not a
+        # real count; the steward treats the result as 'good enough to describe'.
         file_count = len(items)
         has_readme = False
         has_license = False
@@ -414,6 +471,8 @@ class RepositoryScanner:
             return None
 
         lines = markdown_content.splitlines()
+        # Two-pass: first split into paragraphs, then pick the first one that looks
+        # like prose. Doing it in one pass would make badges mid-paragraph hard to drop.
         candidate_paragraphs: List[str] = []
         current_para: List[str] = []
 
@@ -427,6 +486,8 @@ class RepositoryScanner:
                 continue
 
             ## Skip blockquotes or list items for primary overview summary.
+            # Lists and quotes are usually feature bullets or notes, not the one-line
+            # description we want for a portfolio blurb.
             if trimmed.startswith(">") or trimmed.startswith("- ") or trimmed.startswith("* "):
                 continue
 
@@ -445,6 +506,8 @@ class RepositoryScanner:
             cleaned = " ".join(cleaned.split())
 
             ## Check if paragraph is substantial and informative.
+            # 20 chars filters out taglines like 'MIT License' while accepting real
+            # sentences; the TOC check avoids picking the contents list of long READMEs.
             if len(cleaned) >= 20 and not cleaned.lower().startswith("table of contents"):
                 return cleaned
 
