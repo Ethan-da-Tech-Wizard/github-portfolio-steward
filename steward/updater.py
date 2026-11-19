@@ -4,6 +4,12 @@
 # Last Modified: November 18, 2026
 # Purpose: Applies synthesized descriptions and topics to GitHub repositories via the gh CLI with dry-run and apply modes. Formats gh repo edit commands and updates remote GitHub metadata safely.
 # ==============================================================================
+# Role: the only place in the tool that WRITES to GitHub. steward/cli.py's
+# `update` command asks MetadataSynthesizer for a MetadataRecommendation, then
+# passes it here. Dry-run is the default so a mistyped command can never change
+# remote metadata; live mode must be requested explicitly.
+# Safety: arguments are passed to gh as a list (no shell), and only the
+# description and *added* topics are touched; existing topics are never removed.
 import subprocess
 from typing import Dict, Any, List, Tuple
 from steward.models import MetadataRecommendation
@@ -17,6 +23,7 @@ class PortfolioUpdater:
 
     def __init__(self, gh_executable: str = "gh"):
         ## Store the binary name or path for gh CLI invocations.
+        # Overridable so tests can substitute a recording stub for the real gh binary.
         self.gh_executable = gh_executable
 
     def _execute_gh(self, args: List[str]) -> Tuple[int, str, str]:
@@ -24,6 +31,8 @@ class PortfolioUpdater:
         ## Helper to execute a gh command in a subprocess safely.
         ## Captures stdout and stderr without raising unhandled subprocess exceptions.
         """
+        # Duplicate of the scanner helper on purpose: the updater must not import the
+        # read-side scanner, keeping write access isolated in this module.
         cmd = [self.gh_executable] + args
         try:
             proc = subprocess.run(
@@ -34,6 +43,7 @@ class PortfolioUpdater:
             )
             return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
         except FileNotFoundError:
+            # 127 = shell convention for 'command not found'.
             return 127, "", f"Executable '{self.gh_executable}' not found in PATH."
 
     def build_gh_edit_command(
@@ -45,12 +55,15 @@ class PortfolioUpdater:
         """
         ## Assembles the gh repo edit command arguments based on recommendation deltas.
         """
+        # gh repo edit accepts several flags in one call, so one API round trip covers
+        # both description and topics.
         args = ["repo", "edit", recommendation.repo_name]
 
         ## Add description flag if requested and modified.
         if update_description and recommendation.description_changed:
             args.extend(["--description", recommendation.proposed_description])
 
+        # gh needs one --add-topic per topic; there is no comma-separated form.
         ## Add topics flags for new topics to add.
         if update_topics and recommendation.topics_to_add:
             for topic in recommendation.topics_to_add:
@@ -68,6 +81,8 @@ class PortfolioUpdater:
         """
         ## Applies metadata changes to GitHub or simulates execution in dry-run mode.
         """
+        # Idempotency: re-running after a successful apply must report 'noop' instead of
+        # issuing an edit that changes nothing (and burns rate limit).
         ## Check if there are any actionable changes.
         needs_desc_update = update_description and recommendation.description_changed
         needs_topic_update = update_topics and bool(recommendation.topics_to_add)
@@ -87,6 +102,8 @@ class PortfolioUpdater:
             update_topics=update_topics
         )
 
+        # The printed command quotes arguments containing spaces so it can be copy-pasted
+        # into a terminal; it is for display only and is never executed in this branch.
         ## Handle dry-run mode without modifying remote GitHub state.
         if dry_run:
             return {
@@ -100,6 +117,8 @@ class PortfolioUpdater:
                 "dry_run": True,
             }
 
+        # Failures are returned as data, not raised, so a batch update continues with
+        # the remaining repos and the CLI can summarise all errors at the end.
         ## Execute the edit command live on GitHub.
         returncode, stdout, stderr = self._execute_gh(cmd_args)
         if returncode != 0:

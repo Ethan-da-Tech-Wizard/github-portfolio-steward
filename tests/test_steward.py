@@ -4,6 +4,11 @@
 # Last Modified: November 18, 2026
 # Purpose: Comprehensive unit test suite validating scanner, synthesizer, updater, header auditor, models, and CLI subcommands with simulated GitHub CLI responses and mock file systems.
 # ==============================================================================
+# Test layout: one TestCase per module (models, scanner, synthesizer, updater,
+# header auditor, CLI). Nothing here touches the network or the real gh binary:
+# subprocess.run is patched wherever a GitHub call would occur, and file-system
+# cases use throwaway temp directories. This is what lets CI run the suite with
+# `python3 -m unittest discover -s tests -v` on a bare runner with no gh login.
 import io
 import json
 import os
@@ -32,6 +37,8 @@ class TestModels(unittest.TestCase):
     ## Verifies serialization, initialization, and defaults of core data models.
     """
 
+    # Pins the dict shape other tools and the --json flag depend on; renaming a
+    # field would silently break downstream consumers of the JSON.
     def test_repo_summary_to_dict(self):
         ## Test RepoSummary serialization to dictionary.
         repo = RepoSummary(
@@ -49,6 +56,8 @@ class TestModels(unittest.TestCase):
         self.assertEqual(d["topics"], ["python", "cli"])
         self.assertFalse(d["is_fork"])
 
+    # Defaults matter because the scanner's fallback path returns a bare
+    # CodebaseFacts() when GitHub is unreachable; it must be safely empty.
     def test_codebase_facts_defaults(self):
         ## Test CodebaseFacts default values and serialization.
         facts = CodebaseFacts()
@@ -58,6 +67,7 @@ class TestModels(unittest.TestCase):
         d = facts.to_dict()
         self.assertIsInstance(d, dict)
 
+    # Confidence defaults to 1.0 unless the synthesizer lowers it; the CLI prints it.
     def test_metadata_recommendation(self):
         ## Test MetadataRecommendation initialization and delta properties.
         rec = MetadataRecommendation(
@@ -87,6 +97,9 @@ class TestScanner(unittest.TestCase):
         ## Clean up temporary test files.
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
+    # Scenario: badge line, link, heading and bullet list around one real paragraph.
+    # Proves the summary is the prose paragraph with markup stripped, which is what
+    # becomes the GitHub description.
     def test_extract_readme_summary_basic(self):
         ## Verify markdown cleaning: strip badges, links, headers.
         markdown = """# Project Title
@@ -106,12 +119,17 @@ It inspects repositories and applies standardized topics and descriptions.
         self.assertNotIn("Build Status", summary)
         self.assertNotIn("#", summary)
 
+    # A README with only a title must give None, not an empty string, so the
+    # synthesizer correctly falls through to its next priority.
     def test_extract_readme_summary_empty(self):
         ## Verify graceful handling of empty or blank README.
         scanner = RepositoryScanner()
         self.assertIsNone(scanner.extract_readme_summary(""))
         self.assertIsNone(scanner.extract_readme_summary("# Title only\n"))
 
+    # Scenario: a throwaway tree containing one marker for each ecosystem plus a
+    # node_modules/junk.js. Covers framework/language detection, README/LICENSE/tests/CI
+    # flags, and proves ignored directories are pruned (JS must not be detected).
     def test_inspect_local_directory_markers(self):
         ## Verify detection of Python, Cargo, Docker, Systemd, CI, and test markers.
         d = Path(self.test_dir)
@@ -153,6 +171,9 @@ It inspects repositories and applies standardized topics and descriptions.
         self.assertNotIn("JavaScript", facts.detected_languages)
 
     @patch("steward.scanner.subprocess.run")
+    # Feeds canned `gh repo list` JSON through a patched subprocess.run. The second
+    # record is a fork and must be filtered out by default; checks nested-field
+    # extraction (primaryLanguage.name, repositoryTopics[].name).
     def test_fetch_github_repos_mock(self, mock_run):
         ## Verify parsing of gh repo list JSON output.
         mock_output = [
@@ -196,6 +217,8 @@ class TestSynthesizer(unittest.TestCase):
     ## Verifies metadata synthesis, exclusion rules, topic normalization, and length constraints.
     """
 
+    # Table of messy inputs -> GitHub-valid tags. Note 'C++' becomes 'c': plus signs
+    # are stripped, a known lossy edge accepted because GitHub topics cannot contain them.
     def test_normalize_topic(self):
         ## Verify topic standardization into valid GitHub tags.
         synth = MetadataSynthesizer()
@@ -207,6 +230,8 @@ class TestSynthesizer(unittest.TestCase):
         self.assertIsNone(synth.normalize_topic(""))
         self.assertIsNone(synth.normalize_topic("a" * 36))  ## Over 35 char limit
 
+    # Covers exact name, owner/name form, and regex patterns, plus a negative case
+    # so the filter cannot degrade into 'exclude everything'.
     def test_exclusion_patterns(self):
         ## Verify exclusion filtering via exact names and regex patterns.
         synth = MetadataSynthesizer(exclusions=["EXAMPLE_ORG", r".*-private$", "archived-.*"])
@@ -216,6 +241,8 @@ class TestSynthesizer(unittest.TestCase):
         self.assertTrue(synth.is_excluded("archived-legacy-code"))
         self.assertFalse(synth.is_excluded("github-portfolio-steward"))
 
+    # A single over-long sentence must be cut on a word boundary with '...' and stay
+    # under GitHub's limit; otherwise `gh repo edit` would reject the update.
     def test_synthesize_description_length_limit(self):
         ## Verify generated description is strictly under 250 characters.
         synth = MetadataSynthesizer()
@@ -231,6 +258,8 @@ class TestSynthesizer(unittest.TestCase):
         self.assertLess(len(desc), 250)
         self.assertTrue(desc.endswith("..."))
 
+    # Only topics NOT already on the repo are proposed ('python' exists, so it must
+    # not appear in topics_to_add); this keeps applies idempotent.
     def test_recommendation_delta(self):
         ## Verify recommendation produces correct delta between current and proposed metadata.
         synth = MetadataSynthesizer()
@@ -260,6 +289,8 @@ class TestUpdater(unittest.TestCase):
     ## Verifies dry-run command generation and live application.
     """
 
+    # Verifies argument order (repo edit <name> first) and that each flag/value pair
+    # is its own list item, which is what keeps values with spaces safe.
     def test_build_gh_edit_command(self):
         ## Verify CLI command assembly for gh repo edit.
         updater = PortfolioUpdater()
@@ -279,6 +310,8 @@ class TestUpdater(unittest.TestCase):
         self.assertIn("--add-topic", cmd)
         self.assertIn("automation", cmd)
 
+    # Dry-run must never shell out; asserting status 'planned' and
+    # changes_applied False is the guard that makes the CLI default safe.
     def test_apply_dry_run(self):
         ## Verify dry-run returns planned status without executing subprocess.
         updater = PortfolioUpdater()
@@ -295,6 +328,7 @@ class TestUpdater(unittest.TestCase):
         self.assertFalse(res["changes_applied"])
 
     @patch("steward.updater.subprocess.run")
+    # Patched subprocess returns rc 0: apply() must report success and flag the change applied.
     def test_apply_live_success(self, mock_run):
         ## Verify live execution handling when gh command succeeds.
         mock_proc = MagicMock()
@@ -316,6 +350,8 @@ class TestUpdater(unittest.TestCase):
         self.assertTrue(res["changes_applied"])
 
 
+    # A 403 from gh must surface as status 'error' with the message preserved, not
+    # an exception that would abort a multi-repo sync.
     def test_apply_live_failure(self):
         ## Verify handling of gh CLI failure.
         with patch("steward.updater.subprocess.run") as mock_run:
@@ -337,6 +373,7 @@ class TestUpdater(unittest.TestCase):
             self.assertFalse(res["changes_applied"])
             self.assertIn("403", res["message"])
 
+    # Nothing to change means no gh call at all and status 'noop'.
     def test_apply_noop(self):
         ## Verify noop when metadata matches.
         updater = PortfolioUpdater()
@@ -360,6 +397,7 @@ class TestHeaderAuditor(unittest.TestCase):
     def setUp(self):
         self.auditor = HeaderAuditor()
 
+    # Happy path: docstring header with all four fields parses into typed values.
     def test_compliant_python_header(self):
         ## Test valid Python docstring header.
         content = '''"""
@@ -380,6 +418,7 @@ def foo():
         self.assertEqual(res.purpose, "A test module for validating headers.")
         self.assertEqual(len(res.missing_fields), 0)
 
+    # Same contract for /* */ headers (C, Rust, JS, Go share this path).
     def test_compliant_c_style_header(self):
         ## Test valid C/Rust/JS block comment header.
         content = '''/*
@@ -395,6 +434,8 @@ int main() { return 0; }
         self.assertTrue(res.is_compliant)
         self.assertEqual(res.program_name, "Core Engine")
 
+    # Partial header: each absent field is named in missing_fields so the report
+    # tells the author exactly what to add.
     def test_missing_fields_detection(self):
         ## Test detection of missing fields.
         content = '''"""
@@ -407,6 +448,8 @@ Program: Only Program Name
         self.assertIn("Last Modified", res.missing_fields)
         self.assertIn("Purpose", res.missing_fields)
 
+    # The header standard requires the owner as Programmer; any other name fails
+    # even if all four fields exist.
     def test_non_ethan_programmer(self):
         ## Test that non-Ethan-da-Tech-Wizard programmer fails compliance.
         content = '''"""
@@ -420,6 +463,8 @@ Purpose: Tool purpose.
         self.assertFalse(res.is_compliant)
         self.assertTrue(any("Ethan-da-Tech-Wizard" in f for f in res.missing_fields))
 
+    # One good and one bad file give exactly 50.0%, pinning the percentage formula
+    # the CI gate (--fail-under 100) relies on.
     def test_directory_audit(self):
         ## Test recursive audit of a directory with compliant and non-compliant files.
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -448,6 +493,8 @@ class TestCLI(unittest.TestCase):
     ## Verifies command-line interface execution, flag handling, and exit codes.
     """
 
+    # Smoke test that argparse wiring accepts a subcommand with int and flag options
+    # and maps --json to json_output.
     def test_create_parser(self):
         ## Verify parser builds with all subcommands and parses valid args.
         parser = create_parser()
@@ -456,6 +503,8 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.limit, 25)
         self.assertTrue(args.json_output)
 
+    # End-to-end through main() with stdout captured: exit code 0 and the report
+    # labels users grep for are present.
     def test_scan_local_cli(self):
         ## Verify scan --local outputs expected text and returns 0.
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -467,6 +516,8 @@ class TestCLI(unittest.TestCase):
                 self.assertIn("Local Codebase Scan", out)
                 self.assertIn("Has README:          Yes", out)
 
+    # Exercises the threshold logic CI depends on: 100% passes, 50% fails at
+    # --fail-under 100 (exit 1) but passes at 40.
     def test_header_check_cli_pass_and_fail(self):
         ## Verify header-check exit code complies with fail-under threshold.
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -495,6 +546,8 @@ Purpose: Test CLI header checking.
             self.assertEqual(code, 0)
 
 
+    # describe --local --json must emit parseable JSON with a changed description
+    # for a repo that had none.
     def test_describe_local_cli(self):
         ## Verify describe subcommand with --local directory.
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -511,6 +564,8 @@ Purpose: Test CLI header checking.
                 self.assertTrue(data["description_changed"])
 
     @patch("steward.scanner.subprocess.run")
+    # Two canned repos, one with no description/topics, must yield 50% description
+    # coverage and list the empty repo by name.
     def test_audit_cli(self, mock_run):
         ## Verify audit subcommand against remote repository list.
         mock_output = [
@@ -555,6 +610,8 @@ Purpose: Test CLI header checking.
             self.assertEqual(data["description_coverage_pct"], 50.0)
             self.assertIn("Ethan-da-Tech-Wizard/empty-repo", data["missing_description"])
 
+    # The json and markdown renderers are separate code paths; each is checked once
+    # so a formatting regression is caught.
     def test_header_check_formats(self):
         ## Verify markdown and json output formats for header-check.
         with tempfile.TemporaryDirectory() as temp_dir:
