@@ -38,6 +38,25 @@ python3 -m steward sync --repo OWNER/REPOSITORY --dry-run
 
 The metadata scores are heuristic, not evidence that generated claims are accurate. A header-check result reflects the files and rules checked, not the quality or safety of a project.
 
+## Visual Walkthrough & Diagnostics
+
+<p align="center">
+  <img src="docs/assets/steward_header_audit.svg" alt="Portfolio Steward Header Compliance Audit" width="860">
+</p>
+
+<p align="center">
+  <img src="docs/assets/steward_sync_workflow.svg" alt="Portfolio Steward Synchronizer & Synthesis" width="860">
+</p>
+
+## Magi Standards & AI Contributor Onboarding
+
+All portfolio automation tools, repository scanners, and metadata synthesizers adhere to the **[Magi Bible: Engineering Foundations & Safety Standards for AI Coding](MAGI_BIBLE.md)** and **[MAGI_LOOK_HERE.md](MAGI_LOOK_HERE.md)**:
+- **[MAGI_LOOK_HERE.md](MAGI_LOOK_HERE.md)**: Universal contributor & AI agent onboarding guide, visual walkthrough requirements, zero-PII validation rules.
+- **[MAGI_BIBLE.md](MAGI_BIBLE.md)**: Core engineering foundations, multi-seat governance, and verification checklists.
+- **Rule 16 Commenting Invariant:** Code contains comprehensive structural headers and inline rationale.
+- **Safe Dry-Run Gating:** All mutating synchronization operations require explicit non-dry-run confirmation.
+- **Zero Secrets & Leak-Scrubbed:** Free of private tokens, paths, or personal hostnames.
+
 ## License
 
 [MIT License](LICENSE).
